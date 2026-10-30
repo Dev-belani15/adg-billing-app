@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: zyden-retail-erp
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://zyden:zyden_secure_pass@postgres:5432/zyden_retail_erp?schema=public
+      - NEXTAUTH_SECRET=zyden-super-secure-jwt-secret-key-32chars
+      - NEXTAUTH_URL=http://localhost:3000
+      - NODE_ENV=production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - zyden_uploads:/app/public/uploads
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: zyden-retail-db
+    restart: always
+    environment:
+      POSTGRES_USER: zyden
+      POSTGRES_PASSWORD: zyden_secure_pass
+      POSTGRES_DB: zyden_retail_erp
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zyden -d zyden_retail_erp"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  zyden_uploads:

@@ -1,0 +1,13 @@
+{
+  "/api/reports/dashboard/route": "app/api/reports/dashboard/route.js",
+  "/api/auth/me/route": "app/api/auth/me/route.js",
+  "/pos/page": "app/pos/page.js",
+  "/api/notifications/route": "app/api/notifications/route.js",
+  "/dashboard/page": "app/dashboard/page.js",
+  "/api/pos/products/route": "app/api/pos/products/route.js",
+  "/pos/held-bills/page": "app/pos/held-bills/page.js",
+  "/api/pos/held-bills/route": "app/api/pos/held-bills/route.js",
+  "/sales/page": "app/sales/page.js",
+  "/page": "app/page.js",
+  "/api/sales/route": "app/api/sales/route.js"
+}

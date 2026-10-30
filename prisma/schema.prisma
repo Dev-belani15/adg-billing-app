@@ -1,0 +1,590 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// -------------------------------------------------------------
+// Core Business & Store Hierarchy
+// -------------------------------------------------------------
+
+model Business {
+  id              String           @id @default(cuid())
+  name            String
+  legalName       String?
+  gstin           String?
+  email           String?
+  phone           String?
+  address         String?
+  city            String?
+  state           String?
+  pincode         String?
+  currencySymbol  String           @default("₹")
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  stores          Store[]
+  users           User[]
+  settings        BusinessSettings?
+  auditLogs       AuditLog[]
+  categories      Category[]
+  brands          Brand[]
+}
+
+model BusinessSettings {
+  id                    String    @id @default(cuid())
+  businessId            String    @unique
+  invoicePrefix         String    @default("INV-")
+  invoiceNextNumber     Int       @default(1001)
+  financialYear         String    @default("2026-27")
+  isTaxInclusiveDefault Boolean   @default(true)
+  maxCashierDiscountPct Float     @default(10.0)
+  enableLoyalty         Boolean   @default(true)
+  loyaltyPointsPer100   Float     @default(1.0)
+  loyaltyRedeemValue    Float     @default(1.0) // 1 point = 1 INR
+  thermalPrinterWidth   String    @default("80mm") // 58mm or 80mm
+  enableBarcodeScanner  Boolean   @default(true)
+  allowNegativeStock    Boolean   @default(false)
+  updatedAt             DateTime  @updatedAt
+
+  business              Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+}
+
+model Store {
+  id            String          @id @default(cuid())
+  businessId    String
+  name          String
+  code          String          @unique
+  address       String?
+  phone         String?
+  email         String?
+  gstin         String?
+  state         String?         @default("Maharashtra")
+  isMainBranch  Boolean         @default(false)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  business      Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  counters      Counter[]
+  stockBalances StockBalance[]
+  stockMovements StockMovement[]
+  sales         SalesInvoice[]
+  purchases     PurchaseOrder[]
+  goodsReceipts GoodsReceipt[]
+  shifts        CashierShift[]
+  expenses      Expense[]
+  transfersFrom StockTransfer[] @relation("SourceStore")
+  transfersTo   StockTransfer[] @relation("TargetStore")
+  stockCounts   StockCount[]
+}
+
+model Counter {
+  id          String         @id @default(cuid())
+  storeId     String
+  counterNumber Int          // 1, 2, 3, 4
+  name        String         // "Counter 1", "Counter 2", etc.
+  description String?
+  isActive    Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  store       Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  shifts      CashierShift[]
+  sales       SalesInvoice[]
+
+  @@unique([storeId, counterNumber])
+}
+
+// -------------------------------------------------------------
+// Authentication, Roles & Cashier Shifts
+// -------------------------------------------------------------
+
+model User {
+  id            String         @id @default(cuid())
+  businessId    String
+  name          String
+  email         String         @unique
+  passwordHash  String
+  phone         String?
+  role          String         @default("CASHIER") // OWNER, ADMIN, STORE_MANAGER, CASHIER, STOREKEEPER, ACCOUNTANT, AUDITOR
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  business      Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  shifts        CashierShift[]
+  sales         SalesInvoice[]
+  auditLogs     AuditLog[]
+  expenses      Expense[]
+}
+
+model CashierShift {
+  id             String         @id @default(cuid())
+  storeId        String
+  counterId      String
+  userId         String
+  shiftNumber    Int            @default(1)
+  openingCash    Float          @default(0.0)
+  expectedCash   Float          @default(0.0)
+  actualCash     Float?
+  cashDifference Float?         @default(0.0)
+  totalSales     Float          @default(0.0)
+  cashSales      Float          @default(0.0)
+  upiSales       Float          @default(0.0)
+  cardSales      Float          @default(0.0)
+  refundTotal    Float          @default(0.0)
+  status         String         @default("OPEN") // OPEN, CLOSED
+  notes          String?
+  openedAt       DateTime       @default(now())
+  closedAt       DateTime?
+
+  store          Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  counter        Counter        @relation(fields: [counterId], references: [id], onDelete: Cascade)
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sales          SalesInvoice[]
+}
+
+// -------------------------------------------------------------
+// Product Catalog, Barcode & Categories
+// -------------------------------------------------------------
+
+model Category {
+  id          String     @id @default(cuid())
+  businessId  String
+  name        String
+  description String?
+  colorTag    String?    @default("#4f46e5")
+  createdAt   DateTime   @default(now())
+
+  business    Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  products    Product[]
+}
+
+model Brand {
+  id          String     @id @default(cuid())
+  businessId  String
+  name        String
+  createdAt   DateTime   @default(now())
+
+  business    Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  products    Product[]
+}
+
+model Product {
+  id             String           @id @default(cuid())
+  businessId     String
+  categoryId     String?
+  brandId        String?
+  name           String
+  description    String?
+  sku            String           @unique
+  barcode        String           @unique
+  hsnCode        String?          @default("1905")
+  unit           String           @default("PCS") // PCS, KG, PACK, LTR, BOX
+  costPrice      Float            @default(0.0)
+  sellingPrice   Float            @default(0.0)
+  mrp            Float            @default(0.0)
+  taxRate        Float            @default(5.0) // 0, 5, 12, 18, 28
+  isTaxInclusive Boolean          @default(true)
+  minStockLevel  Float            @default(5.0)
+  reorderQty     Float            @default(20.0)
+  trackBatch     Boolean          @default(false)
+  isActive       Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  category       Category?        @relation(fields: [categoryId], references: [id])
+  brand          Brand?           @relation(fields: [brandId], references: [id])
+  stockBalances  StockBalance[]
+  stockMovements StockMovement[]
+  batches        InventoryBatch[]
+  invoiceLines   SalesInvoiceLine[]
+  purchaseLines  PurchaseOrderLine[]
+  stockCountLines StockCountLine[]
+  transferLines  StockTransferLine[]
+}
+
+model InventoryBatch {
+  id             String           @id @default(cuid())
+  productId      String
+  batchNumber    String
+  mfgDate        DateTime?
+  expiryDate     DateTime?
+  purchaseCost   Float
+  mrp            Float
+  sellingPrice   Float
+  quantity       Float            @default(0.0)
+  createdAt      DateTime         @default(now())
+
+  product        Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  invoiceLines   SalesInvoiceLine[]
+
+  @@unique([productId, batchNumber])
+}
+
+// -------------------------------------------------------------
+// Stock Ledger, Balances & Transfers
+// -------------------------------------------------------------
+
+model StockBalance {
+  id           String    @id @default(cuid())
+  storeId      String
+  productId    String
+  quantity     Float     @default(0.0)
+  reservedQty  Float     @default(0.0)
+  updatedAt    DateTime  @updatedAt
+
+  store        Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product      Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, productId])
+}
+
+model StockMovement {
+  id           String    @id @default(cuid())
+  storeId      String
+  productId    String
+  type         String    // OPENING, SALE, SALE_RETURN, PURCHASE_RECEIPT, SUPPLIER_RETURN, DAMAGE, ADJUSTMENT, TRANSFER_IN, TRANSFER_OUT
+  quantity     Float     // Positive for inbound, Negative for outbound
+  balanceAfter Float
+  unitCost     Float?
+  referenceId  String?   // InvoiceId, POId, ReturnId, etc.
+  reason       String?
+  performedBy  String?
+  createdAt    DateTime  @default(now())
+
+  store        Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product      Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+}
+
+model StockCount {
+  id          String           @id @default(cuid())
+  storeId     String
+  sessionCode String           @unique
+  status      String           @default("IN_PROGRESS") // IN_PROGRESS, COMPLETED, CANCELLED
+  startedBy   String
+  approvedBy  String?
+  notes       String?
+  createdAt   DateTime         @default(now())
+  completedAt DateTime?
+
+  store       Store            @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  lines       StockCountLine[]
+}
+
+model StockCountLine {
+  id            String      @id @default(cuid())
+  stockCountId  String
+  productId     String
+  expectedQty   Float
+  countedQty    Float
+  differenceQty Float
+  approved      Boolean     @default(false)
+
+  stockCount    StockCount  @relation(fields: [stockCountId], references: [id], onDelete: Cascade)
+  product       Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+}
+
+model StockTransfer {
+  id             String              @id @default(cuid())
+  transferNumber String              @unique
+  sourceStoreId  String
+  targetStoreId  String
+  status         String              @default("PENDING") // PENDING, IN_TRANSIT, RECEIVED, CANCELLED
+  dispatchedAt   DateTime?
+  receivedAt     DateTime?
+  notes          String?
+  createdAt      DateTime            @default(now())
+
+  sourceStore    Store               @relation("SourceStore", fields: [sourceStoreId], references: [id])
+  targetStore    Store               @relation("TargetStore", fields: [targetStoreId], references: [id])
+  lines          StockTransferLine[]
+}
+
+model StockTransferLine {
+  id          String        @id @default(cuid())
+  transferId  String
+  productId   String
+  quantity    Float
+
+  transfer    StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  product     Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+}
+
+// -------------------------------------------------------------
+// Customers, Loyalty & Promotions
+// -------------------------------------------------------------
+
+model Customer {
+  id            String              @id @default(cuid())
+  businessId    String
+  name          String
+  phone         String              @unique
+  email         String?
+  address       String?
+  gstin         String?
+  loyaltyPoints Float               @default(0.0)
+  creditBalance Float               @default(0.0)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  sales         SalesInvoice[]
+  loyaltyTxns   LoyaltyTransaction[]
+}
+
+model LoyaltyTransaction {
+  id          String    @id @default(cuid())
+  customerId  String
+  points      Float
+  type        String    // EARNED, REDEEMED, ADJUSTED
+  invoiceId   String?
+  description String?
+  createdAt   DateTime  @default(now())
+
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+model Promotion {
+  id           String    @id @default(cuid())
+  code         String    @unique
+  title        String
+  discountType String    // PERCENTAGE, FIXED_AMOUNT
+  value        Float
+  minBillTotal Float     @default(0.0)
+  maxDiscount  Float?
+  isActive     Boolean   @default(true)
+  validFrom    DateTime  @default(now())
+  validTo      DateTime?
+  usageCount   Int       @default(0)
+  createdAt    DateTime  @default(now())
+}
+
+// -------------------------------------------------------------
+// Suppliers & Purchases
+// -------------------------------------------------------------
+
+model Supplier {
+  id             String          @id @default(cuid())
+  businessId     String
+  name           String
+  companyName    String?
+  gstin          String?
+  phone          String
+  email          String?
+  address        String?
+  state          String?         @default("Maharashtra")
+  paymentTerms   String?         @default("Net 30")
+  currentBalance Float           @default(0.0)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  purchases      PurchaseOrder[]
+}
+
+model PurchaseOrder {
+  id            String              @id @default(cuid())
+  storeId       String
+  supplierId    String
+  poNumber      String              @unique
+  orderDate     DateTime            @default(now())
+  expectedDate  DateTime?
+  status        String              @default("PENDING") // PENDING, PARTIALLY_RECEIVED, COMPLETED, CANCELLED
+  subtotal      Float               @default(0.0)
+  taxAmount     Float               @default(0.0)
+  totalAmount   Float               @default(0.0)
+  paidAmount    Float               @default(0.0)
+  notes         String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  store         Store               @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  supplier      Supplier            @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  lines         PurchaseOrderLine[]
+  goodsReceipts GoodsReceipt[]
+}
+
+model PurchaseOrderLine {
+  id              String        @id @default(cuid())
+  purchaseOrderId String
+  productId       String
+  quantityOrdered Float
+  quantityReceived Float        @default(0.0)
+  unitCost        Float
+  taxRate         Float         @default(5.0)
+  totalCost       Float
+
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  product         Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+}
+
+model GoodsReceipt {
+  id              String        @id @default(cuid())
+  storeId         String
+  purchaseOrderId String
+  grnNumber       String        @unique
+  receivedDate    DateTime      @default(now())
+  receivedBy      String
+  notes           String?
+  createdAt       DateTime      @default(now())
+
+  store           Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+}
+
+// -------------------------------------------------------------
+// Sales Invoices, Lines, Payments & Returns
+// -------------------------------------------------------------
+
+model SalesInvoice {
+  id             String             @id @default(cuid())
+  storeId        String
+  counterId      String
+  cashierId      String
+  shiftId        String?
+  customerId     String?
+  invoiceNumber  String             @unique
+  idempotencyKey String?            @unique
+  subtotal       Float
+  discountAmount Float              @default(0.0)
+  couponCode     String?
+  taxAmount      Float              @default(0.0)
+  cgstAmount     Float              @default(0.0)
+  sgstAmount     Float              @default(0.0)
+  igstAmount     Float              @default(0.0)
+  roundOff       Float              @default(0.0)
+  totalAmount    Float
+  paidAmount     Float
+  changeAmount   Float              @default(0.0)
+  paymentMethod  String             @default("CASH") // CASH, UPI, CARD, SPLIT, CREDIT
+  paymentStatus  String             @default("PAID") // PAID, PARTIAL, REFUNDED, VOID
+  isVoid         Boolean            @default(false)
+  voidReason     String?
+  notes          String?
+  createdAt      DateTime           @default(now())
+
+  store          Store              @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  counter        Counter            @relation(fields: [counterId], references: [id], onDelete: Cascade)
+  cashier        User               @relation(fields: [cashierId], references: [id], onDelete: Cascade)
+  shift          CashierShift?      @relation(fields: [shiftId], references: [id])
+  customer       Customer?          @relation(fields: [customerId], references: [id])
+  lines          SalesInvoiceLine[]
+  payments       Payment[]
+  returns        SalesReturn[]
+}
+
+model SalesInvoiceLine {
+  id             String          @id @default(cuid())
+  invoiceId      String
+  productId      String
+  batchId        String?
+  productName    String
+  sku            String
+  hsnCode        String?
+  unit           String          @default("PCS")
+  quantity       Float
+  unitPrice      Float
+  discountAmount Float           @default(0.0)
+  taxRate        Float           @default(5.0)
+  taxAmount      Float           @default(0.0)
+  cgstAmount     Float           @default(0.0)
+  sgstAmount     Float           @default(0.0)
+  igstAmount     Float           @default(0.0)
+  lineTotal      Float
+
+  invoice        SalesInvoice    @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product        Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  batch          InventoryBatch? @relation(fields: [batchId], references: [id])
+}
+
+model Payment {
+  id              String       @id @default(cuid())
+  invoiceId       String
+  method          String       // CASH, UPI, CARD, STORE_CREDIT
+  amount          Float
+  referenceNumber String?
+  status          String       @default("SUCCESS") // SUCCESS, REFUNDED
+  recordedAt      DateTime     @default(now())
+
+  invoice         SalesInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+model SalesReturn {
+  id                String            @id @default(cuid())
+  originalInvoiceId String
+  returnNumber      String            @unique
+  returnReason      String
+  refundAmount      Float
+  refundMethod      String            @default("CASH") // CASH, UPI, STORE_CREDIT
+  stockRestored     Boolean           @default(true)
+  processedBy       String
+  createdAt         DateTime          @default(now())
+
+  invoice           SalesInvoice      @relation(fields: [originalInvoiceId], references: [id], onDelete: Cascade)
+  lines             SalesReturnLine[]
+}
+
+model SalesReturnLine {
+  id          String      @id @default(cuid())
+  returnId    String
+  productId   String
+  quantity    Float
+  unitPrice   Float
+  refundTotal Float
+  condition   String      @default("SALEABLE") // SALEABLE, DAMAGED
+
+  salesReturn SalesReturn @relation(fields: [returnId], references: [id], onDelete: Cascade)
+}
+
+// -------------------------------------------------------------
+// Cashbook & Expenses
+// -------------------------------------------------------------
+
+model Expense {
+  id          String   @id @default(cuid())
+  storeId     String
+  userId      String
+  title       String
+  category    String   // UTILITIES, RENT, SALARY, PACKAGING, TEA_REFRESHMENTS, REPAIRS, OTHER
+  amount      Float
+  paymentMode String   @default("CASH")
+  payeeName   String?
+  notes       String?
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  store       Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// -------------------------------------------------------------
+// System Audit Logs & Notifications
+// -------------------------------------------------------------
+
+model AuditLog {
+  id         String    @id @default(cuid())
+  businessId String
+  userId     String?
+  userName   String?
+  action     String    // LOGIN, LOGOUT, SALE_CREATE, SALE_VOID, STOCK_ADJUST, SHIFT_CLOSE, PRICE_CHANGE
+  entity     String    // Invoice, Product, Shift, Stock, User
+  entityId   String?
+  details    String?
+  ipAddress  String?
+  createdAt  DateTime  @default(now())
+
+  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user       User?     @relation(fields: [userId], references: [id])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  type      String   // LOW_STOCK, SHIFT_DISCREPANCY, LARGE_DISCOUNT, RETURN_REQUEST
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+}
